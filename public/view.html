@@ -1,27 +1,84 @@
 <!doctype html>
 <html lang="zh-CN">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/styles.css">
-<title>View</title>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="stylesheet" href="/styles.css">
+  <title>View</title>
+</head>
 <body>
-<div class="container">
-  <a class="btn" href="/">← 返回</a>
-  <div id="content">加载中…</div>
-</div>
+  <div class="container" style="max-width:496px;">
+    <div id="nav" style="padding:6px 0;">
+      <a class="btn" href="/" style="text-decoration:none;">← 目录</a>
+    </div>
+
+    <div id="content" class="item" style="min-height:60vh;">
+      <div class="meta">加载中…</div>
+    </div>
+
+    <footer id="ft"></footer>
+  </div>
+
 <script>
-function qp(k){return new URL(location.href).searchParams.get(k)}
-const f=qp('f')||'';const c=document.getElementById('content');
-(async()=>{
-  if(!f){c.textContent='无文件';return;}
-  if(f.endsWith('.md')||f.endsWith('.txt')){
-    const t=await fetch(f).then(r=>r.text());
-    c.innerHTML='<pre>'+t.replace(/[<>]/g,m=>({'<':'&lt;','>':'&gt;'}[m]))+'</pre>';
-  }else if(f.endsWith('.pdf')){
-    c.innerHTML=`<embed src='${f}#toolbar=0' type='application/pdf' style='width:100%;height:70vh'/>`;
-  }else{
-    c.innerHTML=`<a href='${f}'>下载 ${f}</a>`;
+(function(){
+  function qp(k){ return new URL(location.href).searchParams.get(k) || ''; }
+  const f = qp('f');
+  const content = document.getElementById('content');
+
+  function escapeHtml(s){
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+
+  function renderText(txt){
+    // 简单的 Markdown 标题支持（#、##、###），其余保留换行
+    let lines = txt.split(/\r?\n/);
+    for (let i=0;i<lines.length;i++){
+      const l = lines[i];
+      if (/^######\s+/.test(l)) lines[i] = '<h6>'+escapeHtml(l.replace(/^######\s+/, ''))+'</h6>';
+      else if (/^#####\s+/.test(l)) lines[i] = '<h5>'+escapeHtml(l.replace(/^#####\s+/, ''))+'</h5>';
+      else if (/^####\s+/.test(l)) lines[i] = '<h4>'+escapeHtml(l.replace(/^####\s+/, ''))+'</h4>';
+      else if (/^###\s+/.test(l)) lines[i] = '<h3>'+escapeHtml(l.replace(/^###\s+/, ''))+'</h3>';
+      else if (/^##\s+/.test(l)) lines[i] = '<h2>'+escapeHtml(l.replace(/^##\s+/, ''))+'</h2>';
+      else if (/^#\s+/.test(l)) lines[i] = '<h1>'+escapeHtml(l.replace(/^#\s+/, ''))+'</h1>';
+      else lines[i] = escapeHtml(l);
+    }
+    const html = lines.join('\n');
+    content.innerHTML = '<div class="text-body">'+html+'</div>';
+  }
+
+  (async function load(){
+    if(!f){ content.innerHTML = '<div class="meta">无文件</div>'; return; }
+
+    // 支持 .md .txt 自动换行显示；pdf 嵌入；html 用 iframe；其他给下载链接
+    const lower = f.toLowerCase();
+    try {
+      if (lower.endsWith('.md') || lower.endsWith('.txt')) {
+        const t = await fetch(f).then(r => r.text());
+        renderText(t);
+      } else if (lower.endsWith('.pdf')) {
+        content.innerHTML = `<embed src="${f}#toolbar=0&navpanes=0" type="application/pdf" class="embed-frame" />` +
+                            `<div class="meta">如果嵌入失败，<a href="${f}">点此直接打开</a></div>`;
+      } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+        content.innerHTML = `<iframe src="${f}" class="embed-frame"></iframe>`;
+      } else {
+        // 二进制或未知格式
+        content.innerHTML = `<div class="meta">不支持的格式：${escapeHtml(f.split('.').pop().toUpperCase())} · <a href="${f}">下载/打开</a></div>`;
+      }
+    } catch (err) {
+      console.error(err);
+      content.innerHTML = `<div class="meta">加载失败：${escapeHtml(String(err))} · <a href="${f}">直接打开</a></div>`;
+    }
+
+    // footer 显示来源时间（如果有 docs.json 可用）
+    try {
+      const res = await fetch('/docs.json').then(r => r.json());
+      const ft = document.getElementById('ft');
+      if (res && res.updatedAt) {
+        const d = new Date(res.updatedAt);
+        ft.textContent = '清单时间 ' + d.toISOString().slice(0,16).replace('T',' ');
+      }
+    } catch (e) { /* ignore */ }
+  })();
 })();
 </script>
 </body>
