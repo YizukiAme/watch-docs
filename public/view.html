@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/styles.css">
+<title>View</title>
+<body>
+<div class="container">
+  <a class="btn" href="/">← 返回</a>
+  <div id="content">加载中…</div>
+</div>
+<script>
+function qp(k){return new URL(location.href).searchParams.get(k)}
+const f=qp('f')||'';const c=document.getElementById('content');
+(async()=>{
+  if(!f){c.textContent='无文件';return;}
+  if(f.endsWith('.md')||f.endsWith('.txt')){
+    const t=await fetch(f).then(r=>r.text());
+    c.innerHTML='<pre>'+t.replace(/[<>]/g,m=>({'<':'&lt;','>':'&gt;'}[m]))+'</pre>';
+  }else if(f.endsWith('.pdf')){
+    c.innerHTML=`<embed src='${f}#toolbar=0' type='application/pdf' style='width:100%;height:70vh'/>`;
+  }else{
+    c.innerHTML=`<a href='${f}'>下载 ${f}</a>`;
+  }
+})();
+</script>
+</body>
+</html>

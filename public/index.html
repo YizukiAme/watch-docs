@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/styles.css">
+<title>Docs</title>
+<body>
+<div class="container">
+  <input id="q" type="search" placeholder="搜索文件名…">
+  <div id="list"></div>
+</div>
+<script>
+let data={items:[]};
+function render(k=''){
+  const l=document.getElementById('list');
+  const f=k.trim().toLowerCase();
+  const s=data.items.filter(x=>x.name.toLowerCase().includes(f));
+  l.innerHTML=s.map(x=>`<div class=item><a href='/view.html?f=${x.path}'>${x.name}</a></div>`).join('')||'<div>无匹配</div>';
+}
+fetch('/docs.json').then(r=>r.json()).then(j=>{data=j;render('')});
+document.getElementById('q').addEventListener('input',e=>render(e.target.value));
+</script>
+</body>
+</html>
