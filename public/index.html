@@ -1,24 +1,215 @@
 <!doctype html>
 <html lang="zh-CN">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/styles.css">
-<title>Docs</title>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="stylesheet" href="/styles.css">
+  <title>Docs</title>
+  <style>
+    /* 小幅增强：让搜索框在窄屏更醒目 */
+    header { gap: 8px; align-items:center; display:flex; margin-bottom:6px; }
+    #q { width:100%; }
+    .muted-note { color: #9aa0a6; font-size:12px; padding-top:6px; text-align:center; }
+  </style>
+</head>
 <body>
-<div class="container">
-  <input id="q" type="search" placeholder="搜索文件名…">
-  <div id="list"></div>
-</div>
+  <div class="container" style="max-width:496px;">
+    <header>
+      <input id="q" type="search" placeholder="搜索文件名或路径…（例如：生物/糖代谢）" autocomplete="off"/>
+      <button class="btn" id="clear" aria-label="清除">清</button>
+    </header>
+
+    <nav id="tree" class="list" aria-label="文档目录">
+      <div class="meta">正在加载目录…</div>
+    </nav>
+
+    <div class="muted-note">点击文件名打开，点击文件夹可展开/折叠。触控目标已优化。</div>
+    <footer id="ft"></footer>
+  </div>
+
 <script>
-let data={items:[]};
-function render(k=''){
-  const l=document.getElementById('list');
-  const f=k.trim().toLowerCase();
-  const s=data.items.filter(x=>x.name.toLowerCase().includes(f));
-  l.innerHTML=s.map(x=>`<div class=item><a href='/view.html?f=${x.path}'>${x.name}</a></div>`).join('')||'<div>无匹配</div>';
+/*
+  核心功能：
+  - 读取 /docs.json（由构建脚本生成）
+  - 将 /docs/xxx/yyy.ext 转成树形结构
+  - 支持折叠/展开、文件打开（跳转到 view.html?f=...）
+  - 搜索：按文件名或路径匹配，自动展开包含匹配项的父目录并高亮
+*/
+
+function el(tag, cls, html){ const e = document.createElement(tag); if(cls) e.className = cls; if(html!==undefined) e.innerHTML = html; return e; }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function loadManifest(){
+  const resp = await fetch('/docs.json', {cache: 'no-store'});
+  return await resp.json();
 }
-fetch('/docs.json').then(r=>r.json()).then(j=>{data=j;render('')});
-document.getElementById('q').addEventListener('input',e=>render(e.target.value));
+
+function buildTree(items){
+  const root = {};
+  for (const it of items){
+    // it.path is like "/docs/dir/file.md"
+    let p = it.path.replace(/^\/+/, '').split('/'); // ['docs', 'dir', 'file.md']
+    // remove leading 'docs' if present
+    if (p[0] === 'docs') p = p.slice(1);
+    let node = root;
+    for (let i=0;i<p.length;i++){
+      const seg = p[i];
+      const isFile = (i === p.length-1);
+      if (isFile){
+        node[seg] = node[seg] || {};
+        node[seg].__file = it; // attach file metadata
+      } else {
+        node[seg] = node[seg] || {};
+        node = node[seg];
+      }
+    }
+  }
+  return root;
+}
+
+function renderTree(container, tree, basePath='/docs', opts={}){
+  container.innerHTML = '';
+  const ul = el('ul', 'tree-root');
+  container.appendChild(ul);
+
+  function makeNode(name, subtree, pathParts){
+    const li = el('li', 'tree-node');
+    if (subtree.__file){
+      // file
+      const a = el('a', 'tree-file', esc(name));
+      const rel = '/' + ['docs', ...pathParts, name].join('/');
+      a.href = `/view.html?f=${encodeURIComponent(rel)}`;
+      a.setAttribute('data-path', rel);
+      // touch-friendly
+      a.style.display = 'block';
+      a.style.padding = '10px';
+      a.style.borderRadius = '12px';
+      li.appendChild(a);
+    } else {
+      // folder
+      const header = el('div', 'tree-folder-header', `<span class="caret">▸</span><span class="folder-name">${esc(name)}</span>`);
+      header.tabIndex = 0;
+      header.role = 'button';
+      header.setAttribute('aria-expanded', 'false');
+
+      const childUl = el('ul', 'tree-children');
+      // recursion
+      const keys = Object.keys(subtree).filter(k=>k!=='__file').sort((a,b)=>a.localeCompare(b,'zh-Hans-u-co-pinyin'));
+      for (const k of keys){
+        childUl.appendChild(makeNode(k, subtree[k], pathParts.concat(name)));
+      }
+
+      header.addEventListener('click', ()=> {
+        const expanded = header.getAttribute('aria-expanded') === 'true';
+        header.setAttribute('aria-expanded', (!expanded).toString());
+        header.classList.toggle('expanded', !expanded);
+      });
+      header.addEventListener('keydown', (e)=> { if (e.key==='Enter' || e.key===' ') { e.preventDefault(); header.click(); } });
+
+      li.appendChild(header);
+      li.appendChild(childUl);
+    }
+    return li;
+  }
+
+  const topKeys = Object.keys(tree).sort((a,b)=>a.localeCompare(b,'zh-Hans-u-co-pinyin'));
+  for (const k of topKeys){
+    ul.appendChild(makeNode(k, tree[k], []));
+  }
+}
+
+function flattenMatches(tree){
+  // returns array of file nodes with path and name
+  const out = [];
+  function walk(node, parts){
+    for (const k of Object.keys(node)){
+      if (k === '__file') continue;
+      const child = node[k];
+      if (child.__file) {
+        out.push({ path: '/' + ['docs', ...parts, k].join('/'), name: k });
+      } else {
+        walk(child, parts.concat(k));
+      }
+    }
+  }
+  walk(tree, []);
+  return out;
+}
+
+function highlightAndExpand(container, keyword){
+  keyword = (keyword||'').trim().toLowerCase();
+  const headers = container.querySelectorAll('.tree-folder-header');
+  const files = container.querySelectorAll('.tree-file');
+
+  // collapse all
+  headers.forEach(h=>{ h.setAttribute('aria-expanded','false'); h.classList.remove('expanded'); });
+
+  // clear highlights
+  files.forEach(a=> a.classList.remove('match'));
+
+  if (!keyword) return;
+
+  // expand parents of matched files and highlight
+  files.forEach(a=>{
+    const path = a.getAttribute('data-path') || '';
+    const name = a.textContent || '';
+    if (path.toLowerCase().includes(keyword) || name.toLowerCase().includes(keyword)){
+      a.classList.add('match');
+      // expand ancestors
+      let node = a.parentElement; // li
+      while (node && !node.classList.contains('tree-root')){
+        if (node.classList.contains('tree-node')){
+          const hdr = node.querySelector(':scope > .tree-folder-header');
+          if (hdr){
+            hdr.setAttribute('aria-expanded','true');
+            hdr.classList.add('expanded');
+          }
+        }
+        node = node.parentElement;
+      }
+    }
+  });
+}
+
+(async function init(){
+  const treeContainer = document.getElementById('tree');
+  const q = document.getElementById('q');
+  const clearBtn = document.getElementById('clear');
+  let manifest;
+  try {
+    manifest = await loadManifest();
+  } catch (e) {
+    treeContainer.innerHTML = '<div class="meta">无法加载 docs.json：' + esc(String(e)) + '</div>';
+    return;
+  }
+  const items = manifest.items || [];
+  const tree = buildTree(items);
+  renderTree(treeContainer, tree);
+
+  // footer info
+  try {
+    const ft = document.getElementById('ft');
+    if (manifest.updatedAt) {
+      const d = new Date(manifest.updatedAt);
+      ft.textContent = '清单时间 ' + d.toISOString().slice(0,16).replace('T',' ');
+    }
+  } catch (e){}
+
+  // search
+  function onSearch(){
+    const v = q.value.trim();
+    highlightAndExpand(treeContainer, v);
+  }
+  q.addEventListener('input', onSearch);
+  clearBtn.addEventListener('click', ()=>{ q.value=''; onSearch(); q.focus(); });
+
+  // touch-friendly: delegate taps on folder headers to whole area
+  treeContainer.addEventListener('click', (e)=>{
+    const fh = e.target.closest('.tree-folder-header');
+    if (fh && fh.classList.contains('folder-name')) { /* click on name handled above */ }
+  });
+
+})();
 </script>
 </body>
 </html>
